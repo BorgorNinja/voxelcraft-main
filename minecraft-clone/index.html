@@ -137,6 +137,19 @@ function init(){
   renderHotbar(); animate();
 }
 function resize(){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)}
+// FIX: init() called animate() but no such function existed anywhere in this
+// file, so the render loop never started (ReferenceError thrown inside
+// init(), swallowing the rest of that call). renderer.render() was never
+// invoked, leaving the canvas permanently unpainted (black) both on initial
+// load and after "New World"/"Load World". This is the render loop.
+function animate(){
+  requestAnimationFrame(animate);
+  const now=performance.now();
+  const dt=Math.min(.1,(now-last)/1000);
+  last=now;
+  update(dt);
+  renderer.render(scene,camera);
+}
 // ---------------------------------------------------------------------------
 // TEXTURE ATLAS — currently loaded: block_atlas.png (13 blocks) + item_atlas.png
 // (13 items), mapped via manifestBlocks below and assets/texture_manifest.json.
