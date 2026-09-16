@@ -137,6 +137,16 @@ function init(){
   renderHotbar(); animate();
 }
 function resize(){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)}
+// ---------------------------------------------------------------------------
+// TEXTURE ATLAS — currently loaded: block_atlas.png (13 blocks) + item_atlas.png
+// (13 items), mapped via manifestBlocks below and assets/texture_manifest.json.
+//
+// A larger planned atlas (block/item/entity/GUI/particle/etc. categories) is
+// documented for future use in assets/texture-atlas-spec.js — see
+// VOXELCRAFT_TEXTURE_SPEC. It is reference-only right now: not loaded, not
+// imported, and nothing below reads from it. Source layout image:
+// docs/texture-spritesheet-reference.png.
+// ---------------------------------------------------------------------------
 const textureLoader=new THREE.TextureLoader();
 const blockAtlas=textureLoader.load("./assets/block_atlas.png");
 blockAtlas.magFilter=THREE.NearestFilter; blockAtlas.minFilter=THREE.NearestFilter;
