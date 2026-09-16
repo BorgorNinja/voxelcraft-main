@@ -1,0 +1,96 @@
+{
+  "tileSize": 16,
+  "blockAtlas": {
+    "file": "assets/block_atlas.png",
+    "columns": 16,
+    "rows": 4,
+    "tiles": {
+      "grass": {
+        "side": 0,
+        "top": 1,
+        "bottom": 2
+      },
+      "dirt": {
+        "side": 3,
+        "top": 4,
+        "bottom": 5
+      },
+      "stone": {
+        "side": 6,
+        "top": 7,
+        "bottom": 8
+      },
+      "sand": {
+        "side": 9,
+        "top": 10,
+        "bottom": 11
+      },
+      "wood": {
+        "side": 12,
+        "top": 13,
+        "bottom": 14
+      },
+      "leaves": {
+        "side": 15,
+        "top": 16,
+        "bottom": 17
+      },
+      "glass": {
+        "side": 18,
+        "top": 19,
+        "bottom": 20
+      },
+      "water": {
+        "side": 21,
+        "top": 22,
+        "bottom": 23
+      },
+      "coal": {
+        "side": 24,
+        "top": 25,
+        "bottom": 26
+      },
+      "iron": {
+        "side": 27,
+        "top": 28,
+        "bottom": 29
+      },
+      "planks": {
+        "side": 30,
+        "top": 31,
+        "bottom": 32
+      },
+      "brick": {
+        "side": 33,
+        "top": 34,
+        "bottom": 35
+      },
+      "glow": {
+        "side": 36,
+        "top": 37,
+        "bottom": 38
+      }
+    }
+  },
+  "itemAtlas": {
+    "file": "assets/item_atlas.png",
+    "columns": 16,
+    "rows": 1,
+    "tiles": {
+      "grass": 0,
+      "dirt": 1,
+      "stone": 2,
+      "sand": 3,
+      "wood": 4,
+      "leaves": 5,
+      "glass": 6,
+      "water": 7,
+      "coal": 8,
+      "iron": 9,
+      "planks": 10,
+      "brick": 11,
+      "glow": 12
+    }
+  },
+  "scope": "Original VoxelCraft textures for the current prototype block/item registry."
+}

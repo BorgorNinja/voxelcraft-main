@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VoxelCraft HTML Clone</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:system-ui,sans-serif}
+#game{width:100%;height:100%;display:block}
+#hud{position:fixed;inset:0;pointer-events:none;color:white;text-shadow:1px 1px 2px #000}
+#cross{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:24px}
+#info{position:absolute;left:12px;top:10px;font-size:13px;line-height:1.4}
+#hotbar{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:3px}
+.slot{width:54px;height:54px;border:2px solid #555;background:#222c;box-sizing:border-box;text-align:center;padding-top:3px;font-size:11px}
+.slot.sel{border-color:#fff}
+.swatch{width:36px;height:30px;margin:auto auto 2px;border:1px solid #111;background-size:36px 36px;background-position:center;background-repeat:no-repeat;image-rendering:pixelated}
+#menu{position:fixed;inset:0;background:#000b;color:white;display:flex;align-items:center;justify-content:center;z-index:5}
+.panel{background:#202020;padding:22px;min-width:300px;max-width:90vw}
+button,input{font:inherit;padding:8px;margin:4px}
+button{cursor:pointer}
+#saveStatus{font-size:12px;color:#bbb}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  <div id="info">Click to play · WASD move · Space jump · LMB break · RMB place · 1-9 select · Esc unlock</div>
+  <div id="cross">+</div>
+  <div id="hotbar"></div>
+</div>
+<div id="menu">
+  <div class="panel">
+    <h2>VoxelCraft</h2>
+    <p>HTML/JavaScript voxel sandbox, Phase 1-3 foundation.</p>
+    <input id="worldName" value="My World" maxlength="32">
+    <input id="seed" type="number" placeholder="Seed (random if blank)">
+    <br>
+    <button id="newWorld">New World</button>
+    <button id="loadWorld">Load World</button>
+    <button id="exportWorld">Export Save</button>
+    <input id="importWorld" type="file" accept=".json,application/json" style="display:none">
+    <button id="importButton">Import Save</button>
+    <div id="saveStatus">IndexedDB autosave enabled.</div><div style="font-size:12px;color:#9bb">Custom block/item texture atlases loaded from /assets.</div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js";
+
+const VERSION = 4;
+const TEXTURE_TILE = 16;
+const DB_NAME = "voxelcraft-worlds-v1";
+const STORE = "worlds";
+const CHUNK = 16;
+const HEIGHT = 48;
+const SEA = 18;
+
+const BLOCKS = {
+  air:{solid:false,color:0x000000},
+  grass:{solid:true,color:0x55a63a},
+  dirt:{solid:true,color:0x8b5a32},
+  stone:{solid:true,color:0x777777},
+  sand:{solid:true,color:0xd9c27a},
+  wood:{solid:true,color:0x8b5a2b},
+  leaves:{solid:true,color:0x2f7d32},
+  glass:{solid:true,color:0x9ad9e8,transparent:true,opacity:.42},
+  water:{solid:false,color:0x3c82d6,transparent:true,opacity:.55},
+  coal:{solid:true,color:0x252525},
+  iron:{solid:true,color:0xb7a79a},
+  planks:{solid:true,color:0xb8793b},
+  brick:{solid:true,color:0x9d4c3d},
+  glow:{solid:true,color:0xffdd55,emissive:true}
+};
+const ITEMS = ["grass","dirt","stone","sand","wood","leaves","glass","water","coal","iron","planks","brick","glow"];
+
+let scene,camera,renderer,raycaster,world,worldName="My World",seed=0;
+let yaw=0,pitch=0,locked=false,last=performance.now(),saveTimer=0;
+let velocity=new THREE.Vector3(), keys=new Set(), selected=0;
+let meshes=new Map(), inventory={grass:64,dirt:64,stone:64,sand:32,wood:32,leaves:32,glass:16,water:16,coal:0,iron:0,planks:0,brick:0,glow:0};
+let mobs=[], mobTimer=0, gameTick=0;
+
+function hash(x,z,s=seed){let n=(Math.imul(x,374761393)^Math.imul(z,668265263)^Math.imul(s,1442695041))>>>0;n=(n^(n>>>13))>>>0;n=Math.imul(n,1274126177)>>>0;return ((n^(n>>>16))>>>0)/4294967296}
+function noise(x,z){const xi=Math.floor(x),zi=Math.floor(z),xf=x-xi,zf=z-zi;const a=hash(xi,zi),b=hash(xi+1,zi),c=hash(xi,zi+1),d=hash(xi+1,zi+1);const u=xf*xf*(3-2*xf),v=zf*zf*(3-2*zf);return a+(b-a)*u+(c-a)*v+(a-b-c+d)*u*v}
+function terrainHeight(x,z){
+  let n=0,amp=1,freq=.018,total=0;
+  for(let i=0;i<4;i++){n+=noise(x*freq,z*freq)*amp;total+=amp;amp*=.5;freq*=2}
+  return Math.floor(8+n/total*20);
+}
+function biome(x,z){const n=noise(x*.006+200,z*.006-100);return n<.28?"desert":n>.72?"forest":"plains"}
+function key(x,y,z){return `${x},${y},${z}`}
+function get(x,y,z){return world.blocks.get(key(x,y,z))||"air"}
+function set(x,y,z,b){if(y<0||y>=HEIGHT)return;const k=key(x,y,z);if(b==="air")world.blocks.delete(k);else world.blocks.set(k,b); world.dirty.add(`${Math.floor(x/CHUNK)},${Math.floor(z/CHUNK)}`)}
+function ensureWorldData(){
+  if(world) return;
+  world={blocks:new Map(),dirty:new Set(),modified:new Set(),created:Date.now(),time:0,player:{x:.5,y:terrainHeight(0,0)+2,z:.5,yaw:0,pitch:0}};
+}
+function generateColumn(x,z){
+  const h=Math.max(2,Math.min(HEIGHT-2,terrainHeight(x,z)));
+  const b=biome(x,z);
+  for(let y=0;y<=h;y++){
+    let id=y===h?(b==="desert"?"sand":"grass"):y>h-3?(b==="desert"?"sand":"dirt"):"stone";
+    if(y>4 && y<h-3 && hash(x+y*13,z-y*7)>0.92) id="coal";
+    if(y>7 && y<h-5 && hash(x-y*5,z+y*11)>0.965) id="iron";
+    set(x,y,z,id);
+  }
+  if(h<SEA) for(let y=h+1;y<=SEA;y++) set(x,y,z,"water");
+  if(b==="forest" && h>SEA && hash(x,z)>.965){
+    for(let y=h+1;y<h+5;y++)set(x,y,z,"wood");
+    for(let dx=-2;dx<=2;dx++)for(let dz=-2;dz<=2;dz++)for(let dy=3;dy<=5;dy++)
+      if(Math.abs(dx)+Math.abs(dz)+dy<8 && get(x+dx,h+dy,z+dz)==="air")set(x+dx,h+dy,z+dz,"leaves");
+  }
+}
+function generateArea(radius=5){
+  for(let x=-radius*CHUNK;x<=radius*CHUNK;x++)for(let z=-radius*CHUNK;z<=radius*CHUNK;z++)
+    if(Math.abs(x)%CHUNK===0||Math.abs(z)%CHUNK===0){} // deterministic columns below
+  for(let x=-radius*CHUNK;x<(radius+1)*CHUNK;x++)
+    for(let z=-radius*CHUNK;z<(radius+1)*CHUNK;z++) generateColumn(x,z);
+}
+function init(){
+  renderer=new THREE.WebGLRenderer({canvas:document.querySelector("#game"),antialias:false});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth,innerHeight);
+  renderer.outputColorSpace=THREE.SRGBColorSpace;
+  scene=new THREE.Scene(); scene.background=new THREE.Color(0x79b9e8); scene.fog=new THREE.Fog(0x79b9e8,55,150);
+  camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,.05,220);
+  scene.add(camera);
+  raycaster=new THREE.Raycaster(); raycaster.far=7;
+  const hemi=new THREE.HemisphereLight(0xffffff,0x334455,1.6); scene.add(hemi);
+  const sun=new THREE.DirectionalLight(0xffffff,1.8);sun.position.set(30,70,20);scene.add(sun);
+  window.addEventListener("resize",resize);
+  document.querySelector("#game").addEventListener("click",()=>document.body.requestPointerLock());
+  document.addEventListener("pointerlockchange",()=>locked=document.pointerLockElement===document.body);
+  document.addEventListener("mousemove",e=>{if(!locked)return;yaw-=e.movementX*.002;pitch-=e.movementY*.002;pitch=Math.max(-1.55,Math.min(1.55,pitch));});
+  document.addEventListener("keydown",e=>{keys.add(e.code);if(e.code.startsWith("Digit"))selected=Math.min(ITEMS.length-1,Number(e.code.slice(5))-1);if(e.code==="Escape")document.exitPointerLock();});
+  document.addEventListener("keyup",e=>keys.delete(e.code));
+  document.addEventListener("mousedown",e=>{if(!locked)return;e.preventDefault();if(e.button===0)breakBlock();if(e.button===2)placeBlock()});
+  document.addEventListener("contextmenu",e=>e.preventDefault());
+  renderHotbar(); animate();
+}
+function resize(){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)}
+const textureLoader=new THREE.TextureLoader();
+const blockAtlas=textureLoader.load("./assets/block_atlas.png");
+blockAtlas.magFilter=THREE.NearestFilter; blockAtlas.minFilter=THREE.NearestFilter;
+blockAtlas.colorSpace=THREE.SRGBColorSpace; blockAtlas.wrapS=THREE.ClampToEdgeWrapping; blockAtlas.wrapT=THREE.ClampToEdgeWrapping;
+const blockTextureCache=new Map();
+function atlasTexture(tile){
+  const key=tile;
+  if(blockTextureCache.has(key))return blockTextureCache.get(key);
+  const t=blockAtlas.clone();
+  t.needsUpdate=true;
+  t.magFilter=THREE.NearestFilter; t.minFilter=THREE.NearestFilter;
+  t.colorSpace=THREE.SRGBColorSpace;
+  t.repeat.set(TEXTURE_TILE/256,TEXTURE_TILE/64);
+  const col=tile%16,row=Math.floor(tile/16);
+  t.offset.set(col*TEXTURE_TILE/256,1-(row+1)*TEXTURE_TILE/64);
+  blockTextureCache.set(key,t);
+  return t;
+}
+function material(id,face="side"){
+  const d=BLOCKS[id], tile=manifestBlocks[id]?.[face] ?? manifestBlocks[id]?.side;
+  const m=new THREE.MeshLambertMaterial({
+    map:atlasTexture(tile),
+    transparent:!!d.transparent,
+    opacity:d.opacity??1,
+    alphaTest:d.transparent?0.02:0,
+    emissive:d.emissive?d.color:0,
+    emissiveIntensity:d.emissive?0.45:0
+  });
+  return m;
+}
+const manifestBlocks={grass:{side:0,top:1,bottom:2},dirt:{side:3,top:4,bottom:5},stone:{side:6,top:7,bottom:8},sand:{side:9,top:10,bottom:11},wood:{side:12,top:13,bottom:14},leaves:{side:15,top:16,bottom:17},glass:{side:18,top:19,bottom:20},water:{side:21,top:22,bottom:23},coal:{side:24,top:25,bottom:26},iron:{side:27,top:28,bottom:29},planks:{side:30,top:31,bottom:32},brick:{side:33,top:34,bottom:35},glow:{side:36,top:37,bottom:38}};
+function rebuild(){
+  for(const m of meshes.values())scene.remove(m);meshes.clear();
+  const geom=new THREE.BoxGeometry(1,1,1);
+  const byBlock=new Map();
+  for(const [k,id] of world.blocks){if(id==="air")continue;const [x,y,z]=k.split(",").map(Number);if(Math.abs(x-camera.position.x)>70||Math.abs(z-camera.position.z)>70)continue;(byBlock.get(id)||byBlock.set(id,[]).get(id)).push([x,y,z])}
+  for(const [id,arr] of byBlock){
+    const mats=[material(id,"side"),material(id,"side"),material(id,"top"),material(id,"bottom"),material(id,"side"),material(id,"side")];
+    const g=new THREE.InstancedMesh(geom,mats,arr.length);
+    const dummy=new THREE.Object3D();
+    arr.forEach((p,i)=>{dummy.position.set(p[0]+.5,p[1]+.5,p[2]+.5);dummy.updateMatrix();g.setMatrixAt(i,dummy.matrix)});
+    g.instanceMatrix.needsUpdate=true;g.userData.positions=arr;g.userData.block=id;scene.add(g);meshes.set(id,g);
+  }
+}
+function syncMeshes(){rebuild()}
+function playerBoxCollides(x,y,z){
+  const r=.3,h=1.8;
+  for(let ix=Math.floor(x-r);ix<=Math.floor(x+r);ix++)
+    for(let iy=Math.floor(y);iy<=Math.floor(y+h);iy++)
+      for(let iz=Math.floor(z-r);iz<=Math.floor(z+r);iz++)
+        if(BLOCKS[get(ix,iy,iz)]?.solid)return true;
+  return false;
+}
+function update(dt){
+  if(!world)return;
+  gameTick++; world.time=(world.time+dt*20)%24000;
+  camera.rotation.order="YXZ";camera.rotation.y=yaw;camera.rotation.x=pitch;
+  const speed=keys.has("ShiftLeft")?7:4.3;
+  const f=new THREE.Vector3(Math.sin(yaw),0,-Math.cos(yaw)),r=new THREE.Vector3(Math.cos(yaw),0,Math.sin(yaw));
+  let move=new THREE.Vector3();
+  if(keys.has("KeyW"))move.add(f);if(keys.has("KeyS"))move.sub(f);if(keys.has("KeyD"))move.add(r);if(keys.has("KeyA"))move.sub(r);
+  if(move.lengthSq())move.normalize().multiplyScalar(speed*dt);
+  let onGround=playerBoxCollides(camera.position.x,camera.position.y-.08,camera.position.z);
+  if(keys.has("Space")&&onGround&&velocity.y<=0)velocity.y=8;
+  velocity.y-=20*dt;
+  const nx=camera.position.x+move.x, nz=camera.position.z+move.z;
+  if(!playerBoxCollides(nx,camera.position.y,nz)){camera.position.x=nx;camera.position.z=nz}
+  const ny=camera.position.y+velocity.y*dt;
+  if(!playerBoxCollides(camera.position.x,ny,camera.position.z)){camera.position.y=ny}else{if(velocity.y<0)camera.position.y=Math.floor(camera.position.y)+.001;velocity.y=0}
+  if(camera.position.y<-20){camera.position.set(.5,terrainHeight(0,0)+3,.5);velocity.set(0,0,0)}
+  mobTimer+=dt;if(mobTimer>4){mobTimer=0;spawnMob()}
+  updateMobs(dt);
+  saveTimer+=dt;if(saveTimer>3){saveTimer=0;saveWorld()}
+}
+function spawnMob(){
+  if(mobs.length>=12)return;
+  const a=Math.random()*Math.PI*2,d=10+Math.random()*20,x=Math.floor(camera.position.x+Math.cos(a)*d),z=Math.floor(camera.position.z+Math.sin(a)*d),y=terrainHeight(x,z)+1;
+  mobs.push({x:x+.5,y,z:z+.5,v:0,mesh:new THREE.Mesh(new THREE.BoxGeometry(.7,1.4,.7),new THREE.MeshLambertMaterial({color:0x6a8f3d}))});
+  scene.add(mobs.at(-1).mesh);
+}
+function updateMobs(dt){
+  for(const m of mobs){const dx=camera.position.x-m.x,dz=camera.position.z-m.z,dist=Math.hypot(dx,dz);if(dist<18){m.x+=dx/dist*dt*.7;m.z+=dz/dist*dt*.7}m.y=terrainHeight(Math.floor(m.x),Math.floor(m.z))+1;m.mesh.position.set(m.x,m.y,m.z)}
+}
+function target(){
+  raycaster.setFromCamera({x:0,y:0},camera);return raycaster.intersectObjects([...meshes.values()],false)[0];
+}
+function breakBlock(){
+  const hit=target();if(!hit)return;const id=hit.object.userData.block,p=hit.object.userData.positions[hit.instanceId];if(!p)return;
+  const [x,y,z]=p; if(id==="bedrock")return;set(x,y,z,"air");inventory[id]=(inventory[id]||0)+1;syncMeshes();renderHotbar();
+}
+function placeBlock(){
+  const id=ITEMS[selected];if((inventory[id]||0)<=0)return;const hit=target();if(!hit)return;
+  const p=hit.object.userData.positions[hit.instanceId];if(!p)return;const n=hit.face.normal;const x=p[0]+n.x,y=p[1]+n.y,z=p[2]+n.z;
+  if(get(x,y,z)!=="air")return;if(playerBoxCollides(x+.5,y,z+.5))return;set(x,y,z,id);inventory[id]--;syncMeshes();renderHotbar();
+}
+const itemAtlasUrl="./assets/item_atlas.png";
+function renderHotbar(){
+  const h=document.querySelector("#hotbar");h.innerHTML="";
+  ITEMS.forEach((id,i)=>{
+    const d=document.createElement("div"); d.className="slot"+(i===selected?" sel":"");
+    const s=document.createElement("div"); s.className="swatch";
+    s.style.backgroundImage=`url(${itemAtlasUrl})`;
+    s.style.backgroundRepeat="no-repeat";
+    s.style.backgroundSize="576px 36px";
+    s.style.backgroundPosition=`-${(i%16)*36}px 0px`;
+    s.style.imageRendering="pixelated";
+    d.appendChild(s);
+    d.append(document.createTextNode(`${i+1}: ${id}`));
+    d.appendChild(document.createElement("br"));
+    d.append(document.createTextNode(`${inventory[id]||0}`));
+    h.appendChild(d);
+  });
+}
+function serialize(){
+  return {version:VERSION,name:worldName,seed,created:world.created,time:world.time,player:{x:camera.position.x,y:camera.position.y,z:camera.position.z,yaw,pitch},inventory,blocks:[...world.blocks]};
+}
+function deserialize(d){
+  world={blocks:new Map(d.blocks||[]),dirty:new Set(),modified:new Set(),created:d.created||Date.now(),time:d.time||0,player:d.player||{}};
+  worldName=d.name||"My World";seed=Number(d.seed)||0;inventory=Object.assign({},inventory,d.inventory||{});
+  camera.position.set(world.player.x??.5,world.player.y??25,world.player.z??.5);yaw=world.player.yaw||0;pitch=world.player.pitch||0;
+  syncMeshes();renderHotbar();document.querySelector("#menu").style.display="none";
+}
+function dbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,1);r.onupgradeneeded=()=>r.result.createObjectStore(STORE,{keyPath:"name"});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+async function saveWorld(){
+  if(!world)return;
+  const db=await dbOpen();const tx=db.transaction(STORE,"readwrite");tx.objectStore(STORE).put(serialize());document.querySelector("#saveStatus").textContent=`Autosaved ${new Date().toLocaleTimeString()}`; 
+}
+async function loadNamed(name){
+  const db=await dbOpen();const tx=db.transaction(STORE,"readonly");const req=tx.objectStore(STORE).get(name);return new Promise((res,rej)=>{req.onsuccess=()=>res(req.result);req.onerror=()=>rej(req.error)})
+}
+async function newWorld(){
+  worldName=document.querySelector("#worldName").value.trim()||"My World";const s=document.querySelector("#seed").value;seed=s===""?Math.floor(Math.random()*2147483647):Number(s);
+  world=null;ensureWorldData();generateArea(4);
+  const h=terrainHeight(0,0);camera.position.set(.5,h+2,.5);yaw=0;pitch=0;inventory={grass:64,dirt:64,stone:64,sand:32,wood:32,leaves:32,glass:16,water:16,coal:0,iron:0,planks:0,brick:0,glow:0};
+  syncMeshes();renderHotbar();await saveWorld();document.querySelector("#menu").style.display="none";
+}
+document.querySelector("#newWorld").onclick=newWorld;
+document.querySelector("#loadWorld").onclick=async()=>{const n=document.querySelector("#worldName").value.trim()||"My World";const d=await loadNamed(n);if(d)deserialize(d);else document.querySelector("#saveStatus").textContent="No saved world with that name."};
+document.querySelector("#exportWorld").onclick=async()=>{if(!world)return;const blob=new Blob([JSON.stringify(serialize())],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=(worldName.replace(/[^a-z0-9_-]/gi,"_")||"world")+".json";a.click();URL.revokeObjectURL(a.href)};
+document.querySelector("#importButton").onclick=()=>document.querySelector("#importWorld").click();
+document.querySelector("#importWorld").onchange=async e=>{const f=e.target.files[0];if(!f)return;deserialize(JSON.parse(await f.text()));await saveWorld()};
+window.addEventListener("pagehide",()=>{if(world)saveWorld()});
+window.addEventListener("beforeunload",()=>{if(world)saveWorld()});
+init();
+</script>
+</body>
+</html>
