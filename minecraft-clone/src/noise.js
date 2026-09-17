@@ -1,0 +1,6 @@
+export function hash2(x,z,seed){let n=(Math.imul(x,374761393)^Math.imul(z,668265263)^Math.imul(seed|0,1442695041))>>>0;n=(n^(n>>>13))>>>0;n=Math.imul(n,1274126177)>>>0;return((n^(n>>>16))>>>0)/4294967296}
+export function hash3(x,y,z,seed){let n=(Math.imul(x,374761393)^Math.imul(y,668265263)^Math.imul(z,2246822519)^Math.imul(seed|0,1442695041))>>>0;n=(n^(n>>>13))>>>0;n=Math.imul(n,1274126177)>>>0;return((n^(n>>>16))>>>0)/4294967296}
+const fade=t=>t*t*(3-2*t);
+export function noise2(x,z,seed){const xi=Math.floor(x),zi=Math.floor(z),xf=x-xi,zf=z-zi,u=fade(xf),v=fade(zf);const a=hash2(xi,zi,seed),b=hash2(xi+1,zi,seed),c=hash2(xi,zi+1,seed),d=hash2(xi+1,zi+1,seed);return a+(b-a)*u+(c-a)*v+(a-b-c+d)*u*v}
+export function noise3(x,y,z,seed){const xi=Math.floor(x),yi=Math.floor(y),zi=Math.floor(z),xf=x-xi,yf=y-yi,zf=z-zi,ux=fade(xf),uy=fade(yf),uz=fade(zf);let v=0;for(let dx=0;dx<2;dx++)for(let dy=0;dy<2;dy++)for(let dz=0;dz<2;dz++){const wx=dx?ux:1-ux,wy=dy?uy:1-uy,wz=dz?uz:1-uz;v+=hash3(xi+dx,yi+dy,zi+dz,seed)*wx*wy*wz}return v}
+export function fbm3(x,y,z,seed,octaves=3){let v=0,a=1,total=0;for(let i=0;i<octaves;i++){v+=noise3(x,y,z,seed+i*1013)*a;total+=a;a*=.5;x*=2;y*=2;z*=2}return v/total}

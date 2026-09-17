@@ -1,0 +1,4 @@
+import {CHUNK,MAX_RENDER_DISTANCE} from './config.js';
+import {generateAround,floorDiv} from './world.js';
+import {rebuildVisible} from './rendering.js';
+export function createChunkManager(world,scene,atlas){const chunkMeshes=new Map();let pcx=Infinity,pcz=Infinity,dist=MAX_RENDER_DISTANCE;return{update(x,z,newDist=dist){const cx=floorDiv(Math.floor(x),CHUNK),cz=floorDiv(Math.floor(z),CHUNK);if(cx!==pcx||cz!==pcz||newDist!==dist){pcx=cx;pcz=cz;dist=newDist;generateAround(world,cx,cz,MAX_RENDER_DISTANCE);rebuildVisible(world,scene,chunkMeshes,cx,cz,dist,atlas);return true}return false},rebuild(){for(const g of chunkMeshes.values())scene.remove(g);chunkMeshes.clear();generateAround(world,pcx,pcz,MAX_RENDER_DISTANCE);rebuildVisible(world,scene,chunkMeshes,pcx,pcz,dist,atlas)},dispose(){for(const g of chunkMeshes.values())scene.remove(g);chunkMeshes.clear()},get distance(){return dist}}}

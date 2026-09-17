@@ -1,0 +1,14 @@
+export const CHUNK=16;
+export const HEIGHT=48;
+export const SEA=18;
+export const DEFAULT_RENDER_DISTANCE=6;
+export const UNDERWATER_RENDER_DISTANCE=3;
+export const MAX_RENDER_DISTANCE=DEFAULT_RENDER_DISTANCE;
+export const EYE_HEIGHT=1.62;
+export const PLAYER_HEIGHT=1.8;
+export const PLAYER_RADIUS=.3;
+export const GRAVITY=22;
+export const JUMP_SPEED=8.5;
+export const VERSION=5;
+export const DB_NAME='voxelcraft-worlds-v1';
+export const STORE='worlds';
