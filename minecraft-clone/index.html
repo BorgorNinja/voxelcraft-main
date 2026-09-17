@@ -76,6 +76,13 @@ const ITEMS = ["grass","dirt","stone","sand","wood","leaves","glass","water","co
 let scene,camera,renderer,raycaster,world,worldName="My World",seed=0;
 let yaw=0,pitch=0,locked=false,last=performance.now(),saveTimer=0;
 let velocity=new THREE.Vector3(), keys=new Set(), selected=0;
+// FIX ("ant size" view): feetY is the authoritative physics/collision Y (feet
+// level, matching what playerBoxCollides expects). camera.position.y is a
+// pure render value derived from it every frame as feetY+EYE_HEIGHT. Before
+// this, camera.position.y WAS the feet level directly -- the camera rendered
+// from ground/ankle height, which is why everything looked oversized.
+const EYE_HEIGHT=1.62; // fraction of the 1.8-tall collision box, Minecraft-style
+let feetY=2;
 let meshes=new Map(), inventory={grass:64,dirt:64,stone:64,sand:32,wood:32,leaves:32,glass:16,water:16,coal:0,iron:0,planks:0,brick:0,glow:0};
 let mobs=[], mobTimer=0, gameTick=0;
 
@@ -202,11 +209,26 @@ function material(id,face="side"){
   return m;
 }
 const manifestBlocks={grass:{side:0,top:1,bottom:2},dirt:{side:3,top:4,bottom:5},stone:{side:6,top:7,bottom:8},sand:{side:9,top:10,bottom:11},wood:{side:12,top:13,bottom:14},leaves:{side:15,top:16,bottom:17},glass:{side:18,top:19,bottom:20},water:{side:21,top:22,bottom:23},coal:{side:24,top:25,bottom:26},iron:{side:27,top:28,bottom:29},planks:{side:30,top:31,bottom:32},brick:{side:33,top:34,bottom:35},glow:{side:36,top:37,bottom:38}};
+// FIX (5fps): rebuild() used to emit one full 6-face cube per solid block in
+// range, including every buried block that can never be seen -- a filled
+// hill renders dozens of invisible interior blocks for every visible surface
+// block. blocksVision() treats a neighbor as "hides this face" only if it's
+// solid AND opaque (glass is solid but transparent, so blocks next to glass
+// stay visible through it, matching what you'd actually see). A block is
+// skipped from the render set entirely only if all 6 neighbors hide it --
+// this doesn't touch collision (playerBoxCollides still reads world.blocks
+// directly), only what gets meshed and drawn.
+function blocksVision(id){const d=BLOCKS[id];return !!d&&d.solid&&!d.transparent}
+function isExposed(x,y,z){
+  return !blocksVision(get(x+1,y,z))||!blocksVision(get(x-1,y,z))||
+         !blocksVision(get(x,y+1,z))||!blocksVision(get(x,y-1,z))||
+         !blocksVision(get(x,y,z+1))||!blocksVision(get(x,y,z-1));
+}
 function rebuild(){
   for(const m of meshes.values())scene.remove(m);meshes.clear();
   const geom=new THREE.BoxGeometry(1,1,1);
   const byBlock=new Map();
-  for(const [k,id] of world.blocks){if(id==="air")continue;const [x,y,z]=k.split(",").map(Number);if(Math.abs(x-camera.position.x)>70||Math.abs(z-camera.position.z)>70)continue;(byBlock.get(id)||byBlock.set(id,[]).get(id)).push([x,y,z])}
+  for(const [k,id] of world.blocks){if(id==="air")continue;const [x,y,z]=k.split(",").map(Number);if(Math.abs(x-camera.position.x)>70||Math.abs(z-camera.position.z)>70)continue;if(!isExposed(x,y,z))continue;(byBlock.get(id)||byBlock.set(id,[]).get(id)).push([x,y,z])}
   for(const [id,arr] of byBlock){
     const mats=[material(id,"side"),material(id,"side"),material(id,"top"),material(id,"bottom"),material(id,"side"),material(id,"side")];
     const g=new THREE.InstancedMesh(geom,mats,arr.length);
@@ -233,14 +255,15 @@ function update(dt){
   let move=new THREE.Vector3();
   if(keys.has("KeyW"))move.add(f);if(keys.has("KeyS"))move.sub(f);if(keys.has("KeyD"))move.add(r);if(keys.has("KeyA"))move.sub(r);
   if(move.lengthSq())move.normalize().multiplyScalar(speed*dt);
-  let onGround=playerBoxCollides(camera.position.x,camera.position.y-.08,camera.position.z);
+  let onGround=playerBoxCollides(camera.position.x,feetY-.08,camera.position.z);
   if(keys.has("Space")&&onGround&&velocity.y<=0)velocity.y=8;
   velocity.y-=20*dt;
   const nx=camera.position.x+move.x, nz=camera.position.z+move.z;
-  if(!playerBoxCollides(nx,camera.position.y,nz)){camera.position.x=nx;camera.position.z=nz}
-  const ny=camera.position.y+velocity.y*dt;
-  if(!playerBoxCollides(camera.position.x,ny,camera.position.z)){camera.position.y=ny}else{if(velocity.y<0)camera.position.y=Math.floor(camera.position.y)+.001;velocity.y=0}
-  if(camera.position.y<-20){camera.position.set(.5,terrainHeight(0,0)+3,.5);velocity.set(0,0,0)}
+  if(!playerBoxCollides(nx,feetY,nz)){camera.position.x=nx;camera.position.z=nz}
+  const ny=feetY+velocity.y*dt;
+  if(!playerBoxCollides(camera.position.x,ny,camera.position.z)){feetY=ny}else{if(velocity.y<0)feetY=Math.floor(feetY)+.001;velocity.y=0}
+  if(feetY<-20){camera.position.x=.5;camera.position.z=.5;feetY=terrainHeight(0,0)+3;velocity.set(0,0,0)}
+  camera.position.y=feetY+EYE_HEIGHT;
   mobTimer+=dt;if(mobTimer>4){mobTimer=0;spawnMob()}
   updateMobs(dt);
   saveTimer+=dt;if(saveTimer>3){saveTimer=0;saveWorld()}
@@ -290,12 +313,12 @@ function renderHotbar(){
   });
 }
 function serialize(){
-  return {version:VERSION,name:worldName,seed,created:world.created,time:world.time,player:{x:camera.position.x,y:camera.position.y,z:camera.position.z,yaw,pitch},inventory,blocks:[...world.blocks]};
+  return {version:VERSION,name:worldName,seed,created:world.created,time:world.time,player:{x:camera.position.x,y:feetY,z:camera.position.z,yaw,pitch},inventory,blocks:[...world.blocks]};
 }
 function deserialize(d){
   world={blocks:new Map(d.blocks||[]),dirty:new Set(),modified:new Set(),created:d.created||Date.now(),time:d.time||0,player:d.player||{}};
   worldName=d.name||"My World";seed=Number(d.seed)||0;inventory=Object.assign({},inventory,d.inventory||{});
-  camera.position.set(world.player.x??.5,world.player.y??25,world.player.z??.5);yaw=world.player.yaw||0;pitch=world.player.pitch||0;
+  feetY=world.player.y??25;camera.position.set(world.player.x??.5,feetY+EYE_HEIGHT,world.player.z??.5);yaw=world.player.yaw||0;pitch=world.player.pitch||0;
   syncMeshes();renderHotbar();document.querySelector("#menu").style.display="none";
 }
 function dbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,1);r.onupgradeneeded=()=>r.result.createObjectStore(STORE,{keyPath:"name"});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
@@ -309,7 +332,7 @@ async function loadNamed(name){
 async function newWorld(){
   worldName=document.querySelector("#worldName").value.trim()||"My World";const s=document.querySelector("#seed").value;seed=s===""?Math.floor(Math.random()*2147483647):Number(s);
   world=null;ensureWorldData();generateArea(4);
-  const h=terrainHeight(0,0);camera.position.set(.5,h+2,.5);yaw=0;pitch=0;inventory={grass:64,dirt:64,stone:64,sand:32,wood:32,leaves:32,glass:16,water:16,coal:0,iron:0,planks:0,brick:0,glow:0};
+  const h=terrainHeight(0,0);feetY=h+2;camera.position.set(.5,feetY+EYE_HEIGHT,.5);yaw=0;pitch=0;inventory={grass:64,dirt:64,stone:64,sand:32,wood:32,leaves:32,glass:16,water:16,coal:0,iron:0,planks:0,brick:0,glow:0};
   syncMeshes();renderHotbar();await saveWorld();document.querySelector("#menu").style.display="none";
 }
 document.querySelector("#newWorld").onclick=newWorld;
